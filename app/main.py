@@ -3,7 +3,7 @@ from pathlib import Path
 from urllib.parse import unquote
 from fastapi import FastAPI, Request, Depends
 from fastapi.exceptions import HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -219,6 +219,11 @@ async def billing_form_page(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(url="/login", status_code=303)
     user, token = result
     return templates.TemplateResponse("billing_form.html", {"request": request, "user": user, "token": token})
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    favicon_path = STATIC_DIR / "favicon.png"
+    return FileResponse(str(favicon_path), media_type="image/png")
 
 @app.get("/health")
 async def health_check():
