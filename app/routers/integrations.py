@@ -713,6 +713,108 @@ async def get_billing_breakdown_endpoint(
 NUMEMP_TELOS = 6
 
 
+def _query_local_payroll(db: Session, periodo: str, codccu_filter: list = None) -> list:
+    """
+    Busca dados de folha no banco local (PostgreSQL) quando a API Senior
+    não está configurada. Formata no mesmo padrão que agrupar_por_matricula().
+    Filtra opcionalmente por centro de custo (codccu_filter).
+    """
+    from app.models.billing import (
+        BillingEmployee, EmploymentContract, PayrollItem,
+        PayrollItemType, BillingPeriod, Unit, AdditionalValue
+    )
+    from sqlalchemy.orm import joinedload
+
+    mes_ref = periodo[:7]
+
+    period = db.query(BillingPeriod).filter(
+        BillingPeriod.mes_referencia == mes_ref
+    ).first()
+    if not period:
+        all_periods = db.query(BillingPeriod).all()
+        if all_periods:
+            period = all_periods[0]
+            mes_ref = period.mes_referencia
+    if not period:
+        return []
+
+    query = (
+        db.query(PayrollItem)
+        .options(
+            joinedload(PayrollItem.employee),
+            joinedload(PayrollItem.contract),
+            joinedload(PayrollItem.payroll_item_type),
+            joinedload(PayrollItem.unit),
+        )
+        .filter(PayrollItem.billing_period_id == period.id)
+    )
+
+    if codccu_filter:
+        matching_units = db.query(Unit.id).filter(
+            Unit.centro_custo_femsa.in_(codccu_filter)
+        ).all()
+        if matching_units:
+            unit_ids = [u[0] for u in matching_units]
+            query = query.filter(PayrollItem.unit_id.in_(unit_ids))
+
+    items = query.all()
+
+    emp_map = {}
+    for item in items:
+        emp = item.employee
+        contract = item.contract
+        item_type = item.payroll_item_type
+
+        emp_id = item.employee_id
+        if emp_id not in emp_map:
+            unit = item.unit
+            ccu_code = ""
+            ccu_name = ""
+            if unit and unit.centro_custo_femsa:
+                ccu_code = unit.centro_custo_femsa
+                ccu_name = unit.nome_unidade or ""
+
+            has_demissao = contract and contract.data_demissao
+            situacao_val = "Afastado" if has_demissao else "Ativo"
+            sitafa_val = 7 if has_demissao else 1
+
+            emp_map[emp_id] = {
+                "matricula": emp_id,
+                "nome_funcionario": emp.nome if emp else "-",
+                "cpf": emp.cpf if emp else "-",
+                "data_admissao": str(contract.data_admissao) if contract and contract.data_admissao else None,
+                "codccu": ccu_code,
+                "nomccu": ccu_name,
+                "data_afastamento": str(contract.data_demissao) if has_demissao else None,
+                "salario": contract.salario_base if contract else 0,
+                "sitafa": sitafa_val,
+                "situacao": situacao_val,
+                "cargo": (contract.funcao or contract.cargo) if contract else "-",
+                "periodo_referencia": mes_ref,
+                "codcal": None,
+                "eventos": [],
+            }
+
+        emp_map[emp_id]["eventos"].append({
+            "codigo_evento": item_type.code if item_type else str(item.payroll_item_type_id),
+            "descricao_evento": item_type.description if item_type else "Evento",
+            "natureza_evento": "",
+            "tipo_evento": 0,
+            "referencia_evento": item.quantity,
+            "valor_evento": item.amount,
+        })
+
+    return list(emp_map.values())
+
+
+def _is_senior_configured() -> bool:
+    from app.config import SENIOR_API_DOMAIN, SENIOR_API_KEY, SENIOR_SOAP_USER, SENIOR_SOAP_PASSWORD
+    return bool(
+        (SENIOR_API_DOMAIN and SENIOR_API_KEY) or
+        (SENIOR_SOAP_USER and SENIOR_SOAP_PASSWORD)
+    )
+
+
 def deduplicate_codccu(codccu: List[str]) -> List[str]:
     seen = set()
     unique = []
@@ -835,27 +937,32 @@ async def export_billing_excel(
 @router.get("/senior/payroll")
 async def get_payroll(
     periodo: str = Query(..., description="Data no formato YYYY-MM-DD para filtrar competência"),
-    codccu: List[str] = Query(..., description="Código(s) do centro de custo (um ou mais)")
+    codccu: List[str] = Query(..., description="Código(s) do centro de custo (um ou mais)"),
+    db: Session = Depends(get_db)
 ):
     """
     Busca folha de pagamento de um ou mais centros de custo.
     SEMPRE filtra por empresa TELOS (NUMEMP=6).
-    
-    Retorna dados agrupados por matrícula, com lista de eventos para cada funcionário.
-    
-    Campos retornados por funcionário:
-    - matricula, nome_funcionario, cargo, salario, data_admissao, data_afastamento
-    - eventos: lista de {codigo_evento, descricao_evento, referencia_evento, valor_evento}
+    Se a API Senior não estiver configurada, usa dados locais do banco PostgreSQL.
     """
     try:
         codccu = deduplicate_codccu(codccu)
-        payroll_data = fetch_payroll(periodo, NUMEMP_TELOS, codccu)
-        all_grouped_data = agrupar_por_matricula(payroll_data)
-        
+        source = "senior"
+        warning = None
+
+        if _is_senior_configured():
+            payroll_data = fetch_payroll(periodo, NUMEMP_TELOS, codccu)
+            all_grouped_data = agrupar_por_matricula(payroll_data)
+        else:
+            source = "local"
+            warning = "API Senior não configurada. Exibindo dados da folha armazenados localmente no banco de dados."
+            all_grouped_data = _query_local_payroll(db, periodo, codccu_filter=codccu)
+
         total_eventos = sum(len(emp.get("eventos", [])) for emp in all_grouped_data)
-        
-        return {
+
+        result = {
             "status": "ok",
+            "source": source,
             "periodo": periodo,
             "numemp": NUMEMP_TELOS,
             "codccu": codccu if len(codccu) > 1 else codccu[0],
@@ -863,6 +970,9 @@ async def get_payroll(
             "total_eventos": total_eventos,
             "funcionarios": all_grouped_data
         }
+        if warning:
+            result["warning"] = warning
+        return result
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -870,19 +980,21 @@ async def get_payroll(
 @router.get("/senior/payroll/export")
 async def export_payroll_excel(
     periodo: str = Query(..., description="Data no formato YYYY-MM-DD para filtrar competência"),
-    codccu: List[str] = Query(..., description="Código(s) do centro de custo (um ou mais)")
+    codccu: List[str] = Query(..., description="Código(s) do centro de custo (um ou mais)"),
+    db: Session = Depends(get_db)
 ):
     """
     Exporta folha de pagamento para arquivo Excel.
     SEMPRE filtra por empresa TELOS (NUMEMP=6).
-    
-    Gera planilha com todos os eventos de cada funcionário.
-    Retorna arquivo .xlsx para download.
+    Se a API Senior não estiver configurada, usa dados locais.
     """
     try:
         codccu = deduplicate_codccu(codccu)
-        payroll_data = fetch_payroll(periodo, NUMEMP_TELOS, codccu)
-        all_grouped_data = agrupar_por_matricula(payroll_data)
+        if _is_senior_configured():
+            payroll_data = fetch_payroll(periodo, NUMEMP_TELOS, codccu)
+            all_grouped_data = agrupar_por_matricula(payroll_data)
+        else:
+            all_grouped_data = _query_local_payroll(db, periodo, codccu_filter=codccu)
         
         codccu_label = "_".join(codccu) if len(codccu) <= 3 else f"{len(codccu)}_ccus"
         excel_bytes = payroll_to_excel_bytes(all_grouped_data, periodo, codccu_label)
@@ -915,8 +1027,11 @@ async def export_billing_femsa(
     """
     try:
         codccu = deduplicate_codccu(codccu)
-        payroll_data = fetch_payroll(periodo, NUMEMP_TELOS, codccu)
-        all_grouped_data = agrupar_por_matricula(payroll_data)
+        if _is_senior_configured():
+            payroll_data = fetch_payroll(periodo, NUMEMP_TELOS, codccu)
+            all_grouped_data = agrupar_por_matricula(payroll_data)
+        else:
+            all_grouped_data = _query_local_payroll(db, periodo, codccu_filter=codccu)
         
         dt = datetime.strptime(periodo[:7], "%Y-%m")
         ano = dt.year
@@ -1003,8 +1118,16 @@ async def export_payroll_senior(
     """
     try:
         codccu = deduplicate_codccu(codccu)
-        payroll_data = fetch_payroll(periodo, NUMEMP_TELOS, codccu)
-        all_grouped_data = agrupar_por_matricula(payroll_data)
+        if _is_senior_configured():
+            payroll_data = fetch_payroll(periodo, NUMEMP_TELOS, codccu)
+            all_grouped_data = agrupar_por_matricula(payroll_data)
+        else:
+            from app.db import get_db as _get_db
+            db = next(_get_db())
+            try:
+                all_grouped_data = _query_local_payroll(db, periodo, codccu_filter=codccu)
+            finally:
+                db.close()
 
         codccu_label = "_".join(codccu) if len(codccu) <= 3 else f"{len(codccu)}_ccus"
         excel_bytes = payroll_to_senior_excel_bytes(all_grouped_data, periodo)

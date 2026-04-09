@@ -1368,6 +1368,17 @@ async function loadPayroll() {
         const data = await response.json();
         
         if (data.status === 'ok') {
+            const warningEl = document.getElementById('payroll-source-warning');
+            if (warningEl) warningEl.remove();
+
+            if (data.source === 'local' && data.warning) {
+                const warning = document.createElement('div');
+                warning.id = 'payroll-source-warning';
+                warning.style.cssText = 'background: #2d2a1e; border: 1px solid #b8860b; color: #d4a843; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem;';
+                warning.innerHTML = '<span style="font-size: 1.2rem;">⚠️</span> <span><strong>Dados locais:</strong> ' + data.warning + '</span>';
+                document.getElementById('payroll-summary').parentNode.insertBefore(warning, document.getElementById('payroll-summary'));
+            }
+
             document.getElementById('payroll-total-func').textContent = data.total_funcionarios || 0;
             document.getElementById('payroll-total-eventos').textContent = data.total_eventos || 0;
             document.getElementById('payroll-ccu').textContent = selectedCcus.length > 1 ? `${selectedCcus.length} selecionados` : selectedCcus[0];

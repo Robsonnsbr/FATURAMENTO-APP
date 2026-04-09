@@ -42,11 +42,17 @@ app/
 - **Email**: `ti@grupoopus.com`
 - **Senha**: `telos@2026`
 
+## Fallback Local (Senior API)
+
+Quando as credenciais da API Senior não estão configuradas (`DOMAIN_API`, `API_KEY`, `SENIOR_SOAP_USER`, `SENIOR_SOAP_PASSWORD`), os endpoints de folha de pagamento (`/integrations/senior/payroll`, `/senior/payroll/export`, `/senior/billing/export-femsa`, `/senior/payroll/export-senior`) usam dados locais do banco PostgreSQL em vez de consultar o ERP Senior. Um aviso amarelo é exibido na interface indicando "Dados locais". A função `_query_local_payroll()` em `app/routers/integrations.py` implementa esta lógica com eager loading para performance.
+
 ## Variáveis de Ambiente
 
 - `DATABASE_URL` — URL de conexão com banco PostgreSQL (gerenciado pelo Replit)
 - `DOMAIN_API` — Domínio da API Senior (opcional)
 - `API_KEY` — Chave API Senior (opcional)
+- `SENIOR_SOAP_USER` — Usuário SOAP Senior (opcional)
+- `SENIOR_SOAP_PASSWORD` — Senha SOAP Senior (opcional)
 - `MSSQL_HOST`, `MSSQL_PORT`, `MSSQL_DB`, `MSSQL_USER`, `MSSQL_PASS` — Conexão MSSQL (opcional)
 
 ## Dependências Principais
