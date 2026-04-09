@@ -522,16 +522,60 @@ async def get_senior_tables():
 
 
 @router.get("/senior/cost-centers")
-async def get_cost_centers():
+async def get_cost_centers(db: Session = Depends(get_db)):
     """
     Lista centros de custo da TELOS (NUMEMP=6).
-    Retorna CODCCU e NOMCCU.
+    Tenta a API Senior primeiro; se indisponível, usa dados locais do banco.
     """
-    try:
-        centers = fetch_cost_centers()
-        return {"status": "ok", "count": len(centers), "data": centers}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    from app.config import SENIOR_API_DOMAIN, SENIOR_API_KEY, SENIOR_SOAP_USER, SENIOR_SOAP_PASSWORD
+    from app.models.billing import AdditionalValue, Unit
+
+    senior_configured = bool(
+        (SENIOR_API_DOMAIN and SENIOR_API_KEY) or
+        (SENIOR_SOAP_USER and SENIOR_SOAP_PASSWORD)
+    )
+
+    if senior_configured:
+        try:
+            centers = fetch_cost_centers()
+            if centers:
+                return {"status": "ok", "source": "senior", "count": len(centers), "data": centers}
+        except Exception as e:
+            logger.warning("Falha ao buscar CCUs do Senior, usando fallback local: %s", e)
+
+    # Fallback: dados locais do banco
+    local_centers = []
+
+    # 1. billing_additional_values
+    for av in db.query(AdditionalValue).order_by(AdditionalValue.codccu).all():
+        if av.codccu:
+            local_centers.append({"codccu": av.codccu, "nomccu": av.nome_ccu or av.codccu})
+
+    # 2. billing_units com centro_custo_femsa
+    for unit in db.query(Unit).all():
+        if unit.centro_custo_femsa:
+            existing_codes = {c["codccu"] for c in local_centers}
+            if unit.centro_custo_femsa not in existing_codes:
+                local_centers.append({
+                    "codccu": unit.centro_custo_femsa,
+                    "nomccu": unit.nome_unidade or unit.centro_custo_femsa
+                })
+
+    if local_centers:
+        return {
+            "status": "ok",
+            "source": "local",
+            "warning": "API Senior não configurada. Exibindo centros de custo cadastrados localmente.",
+            "count": len(local_centers),
+            "data": local_centers
+        }
+
+    return {
+        "status": "error",
+        "source": "none",
+        "message": "Nenhum centro de custo disponível. Configure a API Senior ou cadastre centros de custo localmente.",
+        "data": []
+    }
 
 
 @router.get("/senior/cost-centers/all")

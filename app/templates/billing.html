@@ -1232,17 +1232,46 @@ async function loadAllCostCenters() {
     try {
         const response = await fetch('/integrations/senior/cost-centers');
         const data = await response.json();
-        
-        if (data.status === 'ok' && data.data) {
+
+        if (data.status === 'ok' && data.data && data.data.length > 0) {
             allCostCenters = data.data;
             renderCostCenterOptions(allCostCenters);
-            // Também renderiza para a aba de exportação para garantir que use a mesma lista com filtro de empresa
             if (typeof renderExportCostCenterOptions === 'function') {
                 renderExportCostCenterOptions(allCostCenters);
             }
+            // Mostrar aviso se usando dados locais (API Senior não configurada)
+            if (data.source === 'local' && data.warning) {
+                const selects = ['payroll-codccu', 'export-codccu', 'senior-codccu'];
+                selects.forEach(id => {
+                    const sel = document.getElementById(id);
+                    if (sel && sel.parentElement) {
+                        const existingWarn = sel.parentElement.querySelector('.ccu-warning');
+                        if (!existingWarn) {
+                            const warn = document.createElement('p');
+                            warn.className = 'ccu-warning';
+                            warn.style.cssText = 'color: #FBBF24; font-size: 0.75rem; margin-top: 0.4rem;';
+                            warn.textContent = '⚠ ' + data.warning;
+                            sel.parentElement.appendChild(warn);
+                        }
+                    }
+                });
+            }
+        } else {
+            // Sem dados — mostrar mensagem clara em todos os selects
+            const msg = data.message || 'API Senior não configurada. Nenhum centro de custo disponível.';
+            const errorMsg = `<option value="" disabled>${msg}</option>`;
+            ['payroll-codccu', 'export-codccu', 'senior-codccu', 'av-codccu'].forEach(id => {
+                const sel = document.getElementById(id);
+                if (sel) sel.innerHTML = errorMsg;
+            });
         }
     } catch (error) {
         console.error('Erro ao carregar centros de custo:', error);
+        const errorMsg = '<option value="" disabled>Erro ao carregar centros de custo</option>';
+        ['payroll-codccu', 'export-codccu', 'senior-codccu', 'av-codccu'].forEach(id => {
+            const sel = document.getElementById(id);
+            if (sel) sel.innerHTML = errorMsg;
+        });
     }
 }
 
