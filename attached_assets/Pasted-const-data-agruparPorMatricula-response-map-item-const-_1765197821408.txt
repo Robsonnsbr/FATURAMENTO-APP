@@ -1,0 +1,101 @@
+const data = agruparPorMatricula(response).map((item) => {
+        const newMap = {
+          matricula: item.matricula,
+          nome: item.nome_funcionario,
+          cargo: item.cargo,
+          salario: item.salario,
+          dataAdmissao: item.data_admissao,
+          dataDemissao: item.data_afastamento,
+          diasNormaisQtde: eventoNome(item.eventos, "Dias Normais", "ref"),
+          diasNormaisValor: eventoNome(item.eventos, "Dias Normais", "valor"),
+          saldoSalarioQtde: eventoNome(item.eventos, "Saldo de Salário", "ref"),
+          saldoSalarioValor: eventoNome(
+            item.eventos,
+            "Saldo de Salário",
+            "valor"
+          ),
+          diasLicencaMedica15dQtde: eventoNome(
+            item.eventos,
+            "Dias Lic. Médica até 15d",
+            "ref"
+          ),
+          diasLicencaMedica15dValor: eventoNome(
+            item.eventos,
+            "Dias Lic. Médica até 15d",
+            "valor"
+          ),
+          horasExtras50Qtde: eventoNome(
+            item.eventos,
+            "Horas Extras c/ 50%",
+            "ref"
+          ),
+          horasExtras50Valor: eventoNome(
+            item.eventos,
+            "Horas Extras c/ 50%",
+            "valor"
+          ),
+          dsrSobreHorasExtrasQtde: eventoNome(
+            item.eventos,
+            "DSR Sobre Horas Extras",
+            "ref"
+          ),
+          dsrSobreHorasExtrasValor: eventoNome(
+            item.eventos,
+            "DSR Sobre Horas Extras",
+            "valor"
+          ),
+          adicionalNoturno20Qtde: eventoNome(
+            item.eventos,
+            "Adicional Noturno 20%",
+            "ref"
+          ),
+          adicionalNoturno20Valor: eventoNome(
+            item.eventos,
+            "Adicional Noturno 20%",
+            "valor"
+          ),
+          intAdicNoturnoNoDsrQtde: eventoNome(
+            item.eventos,
+            "INT. ADIC.NOTURNO NO DSR",
+            "ref"
+          ),
+          intAdicNoturnoNoDsrValor: eventoNome(
+            item.eventos,
+            "INT. ADIC.NOTURNO NO DSR",
+            "valor"
+          ),
+          inssRef: eventoNome(item.eventos, "INSS", "ref"),
+          inssValor: eventoNome(item.eventos, "INSS", "valor"),
+          seguroVida: eventoNome(item.eventos, "Seguro de Vida", "valor"),
+          fgtsRef: eventoNome(item.eventos, "FGTS", "ref"),
+          fgtsValor: eventoNome(item.eventos, "FGTS", "valor"),
+        };
+
+        return [
+          newMap.matricula,
+          newMap.nome,
+          newMap.cargo,
+          newMap.salario,
+          newMap.dataAdmissao,
+          newMap.dataDemissao,
+          newMap.diasNormaisQtde,
+          newMap.diasNormaisValor,
+          newMap.saldoSalarioQtde,
+          newMap.saldoSalarioValor,
+          newMap.diasLicencaMedica15dQtde,
+          newMap.diasLicencaMedica15dValor,
+          newMap.horasExtras50Qtde,
+          newMap.horasExtras50Valor,
+          newMap.dsrSobreHorasExtrasQtde,
+          newMap.dsrSobreHorasExtrasValor,
+          newMap.adicionalNoturno20Qtde,
+          newMap.adicionalNoturno20Valor,
+          newMap.intAdicNoturnoNoDsrQtde,
+          newMap.intAdicNoturnoNoDsrValor,
+          newMap.inssRef,
+          newMap.inssValor,
+          newMap.seguroVida,
+          newMap.fgtsRef,
+          newMap.fgtsValor,
+        ];
+      });
