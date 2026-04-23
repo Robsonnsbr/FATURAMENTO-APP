@@ -1,0 +1,386 @@
+Você é um assistente de código no Replit.
+Quero criar um backend em **Python + FastAPI** que:
+
+* Usa **SQLite** como banco interno (via SQLAlchemy).
+* Conecta em um **banco MSSQL (Senior)** para buscar dados de faturamento da **empresa TELOS**.
+* Importa esses dados para um modelo interno de banco relacional, com tabelas normalizadas.
+* Expõe endpoints REST para disparar essas importações.
+
+### 1. Stack e requisitos
+
+Use:
+
+* **FastAPI**
+* **Uvicorn**
+* **SQLAlchemy**
+* **pyodbc** (para conectar no MSSQL)
+* **python-dotenv** (para ler variáveis de ambiente de um `.env`)
+
+Crie ou atualize o arquivo de dependências (`requirements.txt` ou `pyproject.toml`) com:
+
+```txt
+fastapi
+uvicorn
+SQLAlchemy
+pyodbc
+python-dotenv
+pydantic
+```
+
+### 2. Estrutura de pastas
+
+Crie o projeto com a seguinte estrutura (pode ajustar import paths corretamente):
+
+```text
+app/
+  main.py
+  config.py
+  db.py
+  models/
+    __init__.py
+    company.py
+    unit.py
+    employee.py
+    employment_contract.py
+    billing_period.py
+    payroll_item_type.py
+    payroll_item.py
+    exam_record.py
+  routers/
+    __init__.py
+    health.py
+    integrations.py
+  services/
+    __init__.py
+    senior_connector.py
+    import_telos.py
+```
+
+Não invente outra estrutura: siga essa.
+
+### 3. Configuração básica do FastAPI
+
+No `app/main.py`:
+
+* Crie a aplicação FastAPI.
+* Importe e inclua os routers `health` e `integrations`.
+* Configure um endpoint `/` que só retorna algo como `{"status": "ok"}`.
+
+No `app/routers/health.py`:
+
+* Crie um router com prefixo `/health` e rota `GET /ping` que retorna `{"ping": "pong"}`.
+
+### 4. Configuração do banco interno (SQLite)
+
+No `app/config.py`:
+
+* Crie uma função para carregar variáveis de ambiente do `.env` usando `python-dotenv`.
+* Defina uma constante `SQLALCHEMY_DATABASE_URL = "sqlite:///./internal.db"` (usar caminho relativo).
+* Defina funções auxiliares se precisar.
+
+No `app/db.py`:
+
+* Configure o `engine` e `SessionLocal` do SQLAlchemy usando `SQLALCHEMY_DATABASE_URL`.
+* Crie `Base = declarative_base()`.
+* Implemente `get_db()` para ser usado como dependência no FastAPI.
+
+### 5. Modelos SQLAlchemy (banco interno)
+
+Implemente os modelos a seguir, todos herdando de `Base` e com `__tablename__` respectivos.
+Use tipos simples (Integer, String, Date, DateTime, Numeric).
+
+#### 5.1. `Company` – `models/company.py`
+
+Campos:
+
+* `id` (PK)
+* `name` (string)
+* `cnpj_femsa` (string, opcional)
+* `created_at` (DateTime, default=now)
+
+#### 5.2. `Unit` – `models/unit.py`
+
+Campos:
+
+* `id` (PK)
+* `company_id` (FK → Company.id)
+* `cnpj_unidade` (string)
+* `nome_unidade` (string)
+* `centro_custo_femsa` (string, opcional)
+* `created_at` (DateTime)
+
+#### 5.3. `Employee` – `models/employee.py`
+
+Campos:
+
+* `id` (PK)
+* `cpf` (string, unique)
+* `nome` (string)
+* `created_at` (DateTime)
+
+#### 5.4. `EmploymentContract` – `models/employment_contract.py`
+
+Campos:
+
+* `id` (PK)
+* `employee_id` (FK → Employee.id)
+* `company_id` (FK → Company.id)
+* `unit_id` (FK → Unit.id, opcional)
+* `cargo` (string, opcional)
+* `funcao` (string, opcional)
+* `salario_base` (Numeric, opcional)
+* `data_admissao` (Date, opcional)
+* `data_demissao` (Date, opcional)
+* `data_termino_contrato` (Date, opcional)
+
+#### 5.5. `BillingPeriod` – `models/billing_period.py`
+
+Campos:
+
+* `id` (PK)
+* `company_id` (FK → Company.id)
+* `mes_referencia` (string, formato `'YYYY-MM'`)
+* `status` (string – ex.: `'aberto'`, `'fechado'`)
+* `created_at` (DateTime)
+
+#### 5.6. `PayrollItemType` – `models/payroll_item_type.py`
+
+Campos:
+
+* `id` (PK)
+* `code` (string, unique) – ex.: `SALARIO_DIA`, `HORA_EXTRA`, `VALE_TRANSPORTE`, etc.
+* `description` (string)
+* `group` (string, opcional) – ex.: `REMUNERACAO`, `BENEFICIO`, `DESCONTO`, `ENCARGO`, `TRIBUTO`
+* `direction` (string, opcional) – ex.: `CREDITO` ou `DEBITO`
+
+#### 5.7. `PayrollItem` – `models/payroll_item.py`
+
+Campos:
+
+* `id` (PK)
+* `billing_period_id` (FK → BillingPeriod.id)
+* `employee_id` (FK → Employee.id)
+* `contract_id` (FK → EmploymentContract.id, opcional)
+* `unit_id` (FK → Unit.id, opcional)
+* `payroll_item_type_id` (FK → PayrollItemType.id)
+* `quantity` (Numeric, opcional)
+* `amount` (Numeric)
+* `source_column` (string, opcional) – nome da coluna original da planilha/Senior.
+* `notes` (string, opcional)
+
+#### 5.8. `ExamRecord` – `models/exam_record.py`
+
+Campos:
+
+* `id` (PK)
+* `billing_period_id` (FK → BillingPeriod.id, opcional)
+* `unit_id` (FK → Unit.id, opcional)
+* `employee_id` (FK → Employee.id, opcional)
+* `tipo` (string) – tipo de exame (admissional, periódico etc.)
+* `exame` (string)
+* `data_pedido` (Date, opcional)
+* `data_exame` (Date, opcional)
+* `data_inativacao` (Date, opcional)
+* `valor_cobrar` (Numeric, opcional)
+
+No `models/__init__.py`, importe todos os modelos e exponha `Base` para que `main.py` possa chamar `Base.metadata.create_all(bind=engine)` na inicialização.
+
+### 6. Conexão com MSSQL (Senior) – `services/senior_connector.py`
+
+Use as variáveis de ambiente abaixo (que já existem num `.env`):
+
+```env
+MSSQL_HOST=hc231130opui3116.cloudhialinx.com.br
+MSSQL_PORT=12404
+MSSQL_DB=opus_hcm_221123
+MSSQL_USER=opus_bi
+MSSQL_PASS=wXrOpu523tRv
+```
+
+No `senior_connector.py`:
+
+1. Carregue essas variáveis com `os.getenv`.
+
+2. Use `urllib.parse.quote_plus` e `pyodbc` para montar uma string de conexão:
+
+   ```python
+   params = urllib.parse.quote_plus(
+       f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+       f"SERVER={MSSQL_HOST},{MSSQL_PORT};"
+       f"DATABASE={MSSQL_DB};"
+       f"UID={MSSQL_USER};"
+       f"PWD={MSSQL_PASS};"
+       "TrustServerCertificate=yes;"
+   )
+   engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}")
+   ```
+
+3. Crie uma função `get_mssql_engine()` que retorna esse `engine`.
+
+4. Crie também funções iniciais para debug:
+
+   * `list_tables()` que retorna a lista de tabelas:
+     `SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY TABLE_SCHEMA, TABLE_NAME`.
+
+### 7. Serviço de importação da TELOS – `services/import_telos.py`
+
+Crie um módulo que use:
+
+* `from app.db import SessionLocal`
+* os modelos (`Company`, `Unit`, `Employee`, `EmploymentContract`, `BillingPeriod`, `PayrollItemType`, `PayrollItem`, `ExamRecord`)
+* e as funções do `senior_connector`.
+
+Implemente **duas funções principais**:
+
+#### 7.1. `import_telos_employees()`
+
+Responsável por:
+
+1. Buscar da Senior todos os funcionários da empresa TELOS.
+   Para isso, crie uma função no `senior_connector.py` chamada `fetch_employees_telos()` com a seguinte assinatura:
+
+   ```python
+   def fetch_employees_telos() -> list[dict]:
+       """
+       Executa um SELECT na base MSSQL (Senior) e retorna uma lista de dicts com,
+       pelo menos, os campos:
+         - cpf
+         - nome
+         - funcao
+         - cargo
+         - data_admissao
+         - data_demissao
+         - empresa_codigo / empresa_nome
+         - cnpj_unidade
+         - nome_unidade
+         - centro_custo
+       A query pode ser deixada com TODO para eu ajustar depois.
+       """
+   ```
+
+   Coloque uma query genérica com comentários `# TODO ajustar nomes de tabelas/colunas`.
+   Exemplo de estrutura de query (NÃO assuma nomes reais, deixe claro em comentários que são placeholders):
+
+   ```sql
+   SELECT
+       f.CPF as cpf,
+       f.NOME as nome,
+       f.FUNCAO as funcao,
+       f.CARGO as cargo,
+       f.DT_ADMISSAO as data_admissao,
+       f.DT_DEMISSAO as data_demissao,
+       emp.NOME as empresa_nome,
+       un.CNPJ as cnpj_unidade,
+       un.NOME as nome_unidade,
+       un.CENTRO_CUSTO as centro_custo
+   FROM FUNCIONARIOS f
+   JOIN EMPRESAS emp ON emp.ID = f.EMPRESA_ID
+   JOIN UNIDADES un ON un.ID = f.UNIDADE_ID
+   WHERE emp.NOME = 'TELOS'
+   ```
+
+2. No `import_telos_employees()`:
+
+   * Criar ou buscar a `Company` com `name="TELOS"`.
+   * Para cada linha retornada:
+
+     * Criar/buscar `Unit` usando `cnpj_unidade`.
+     * Criar/buscar `Employee` usando `cpf`.
+     * Criar um `EmploymentContract` ligado ao employee + company + unit, com cargo, função, salário_base (se tiver), datas de admissão/demissão.
+
+Use uma sessão `db = SessionLocal()` e finalize com `db.commit()` e `db.close()`.
+
+#### 7.2. `import_telos_payroll(competencia: str)`
+
+Responsável por importar os lançamentos de folha da TELOS para um determinado mês de referência, formato `'YYYY-MM'`.
+
+1. No `senior_connector.py`, crie a função:
+
+   ```python
+   def fetch_payroll_items_telos(competencia: str) -> list[dict]:
+       """
+       Executa um SELECT na base MSSQL (Senior) e retorna os lançamentos de folha
+       da empresa TELOS para o mês de referência informado.
+       Esperado retornar, pelo menos:
+         - cpf
+         - tipo_lancamento  (ex.: SALARIO_DIA, HORA_EXTRA, VT, VR, etc.)
+         - quantidade
+         - valor
+         - mes_referencia
+         - cnpj_unidade
+       Deixe a query com TODO para eu ajustar depois com os nomes corretos.
+       """
+   ```
+
+   Coloque uma query SQL genérica com placeholders, com comentários de TODO.
+
+2. No `import_telos_payroll(competencia)`:
+
+   * Buscar `Company` TELOS.
+
+   * Criar/buscar `BillingPeriod` com `company_id=TELOS` e `mes_referencia=competencia`.
+
+   * Para cada item retornado de `fetch_payroll_items_telos`:
+
+     * Buscar `Employee` pelo `cpf`. Se não achar, pode pular (ou criar, mas registre em comentário).
+     * Buscar `Unit` pelo `cnpj_unidade`, se existir.
+     * Buscar/criar `PayrollItemType` com `code=row["tipo_lancamento"]`.
+     * Criar `PayrollItem` com:
+
+       * `billing_period_id`
+       * `employee_id`
+       * `unit_id` (se tiver)
+       * `payroll_item_type_id`
+       * `quantity`
+       * `amount`
+       * `source_column=row["tipo_lancamento"]`.
+
+   * Dar `commit` no final.
+
+### 8. Endpoints FastAPI para rodar as importações – `routers/integrations.py`
+
+Crie um router com prefixo `/integrations` e tag `"integrations"`.
+
+Implemente endpoints:
+
+1. `POST /integrations/senior/telos/import-employees`
+
+   * Chama `import_telos_employees()`
+   * Retorna `{"status": "ok", "import": "employees_telos"}`
+
+2. `POST /integrations/senior/telos/import-payroll/{competencia}`
+
+   * Parâmetro de path `competencia` (string no formato `YYYY-MM`).
+   * Chama `import_telos_payroll(competencia)`.
+   * Retorna `{"status": "ok", "import": "payroll_telos", "competencia": competencia}`
+
+3. Opcional: `GET /integrations/senior/tables`
+
+   * Usa `list_tables()` do `senior_connector` para listar as tabelas da base MSSQL.
+   * Isso vai me ajudar a ajustar os nomes de tabela/colunas depois.
+
+### 9. Inicialização do banco interno
+
+No `app/main.py`, logo após criar a `app = FastAPI()`, importe `Base` e `engine` e execute:
+
+```python
+from app.db import engine
+from app.models import Base
+
+Base.metadata.create_all(bind=engine)
+```
+
+### 10. Instruções finais
+
+* Garanta que todos os imports relativos (`from app.models.company import Company`, etc.) estão corretos.
+* Use tipos `Numeric` com `scale=2` para valores monetários (`amount`, `valor_cobrar`, etc.).
+* Adicione comentários `# TODO` nas queries SQL de MSSQL deixando claro que os nomes de tabela/coluna são exemplos e precisarão ser ajustados manualmente depois que eu listar as tabelas reais.
+
+No final, me mostre:
+
+1. Os arquivos principais gerados (`main.py`, `db.py`, `senior_connector.py`, `import_telos.py`, modelos e routers).
+2. Comandos para rodar a API localmente, por exemplo:
+
+```bash
+uvicorn app.main:app --reload
+```

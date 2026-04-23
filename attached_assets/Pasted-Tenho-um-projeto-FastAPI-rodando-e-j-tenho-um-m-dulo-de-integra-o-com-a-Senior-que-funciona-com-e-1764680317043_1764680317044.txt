@@ -1,0 +1,269 @@
+Tenho um projeto FastAPI rodando e já tenho um módulo de integração com a Senior que funciona, com este formato (resumido):
+
+execute_query(sql_text: str) → chama a API Senior (/query) e devolve {"status": "ok", "data": [...]}
+
+fetch_cost_centers()
+
+count_billing_data(periodo, numemp, codccu?, codcal?, sitafa?)
+
+fetch_billing_data(periodo, numemp, codccu?, codcal?, sitafa?)
+
+fetch_employees_telos()
+
+fetch_payroll_items_telos(periodo, numemp, codccu)
+
+O código desse módulo já está pronto e usa esta SQL base para faturamento (já adaptada para usar o banco correto):
+
+SELECT
+    R034FUN.NUMCAD,
+    R034FUN.NOMFUN,
+    R034FUN.DATADM,
+    R034FUN.CODCCU,
+    R034FUN.DATAFA,
+    R034FUN.VALSAL,
+    R034FUN.SITAFA,
+    R010SIT.DESSIT,
+    R024CAR.TITRED,
+    R044CAL.PERREF,
+    R046VER.CODCAL,
+    R046VER.CODEVE,
+    R008EVC.DESEVE,
+    R046VER.REFEVE,
+    R046VER.VALEVE
+FROM
+    [opus_hcm_221123].dbo.R034FUN
+JOIN
+    [opus_hcm_221123].dbo.R046VER ON
+        R034FUN.NUMEMP = R046VER.NUMEMP AND
+        R034FUN.TIPCOL = R046VER.TIPCOL AND
+        R034FUN.NUMCAD = R046VER.NUMCAD
+JOIN
+    [opus_hcm_221123].dbo.R024CAR ON
+        R034FUN.ESTCAR = R024CAR.ESTCAR AND
+        R034FUN.CODCAR = R024CAR.CODCAR
+JOIN
+    [opus_hcm_221123].dbo.R010SIT ON
+        R034FUN.SITAFA = R010SIT.CODSIT
+JOIN
+    [opus_hcm_221123].dbo.R008EVC ON
+        R046VER.TABEVE = R008EVC.CODTAB AND
+        R046VER.CODEVE = R008EVC.CODEVE
+JOIN
+    [opus_hcm_221123].dbo.R044CAL ON
+        R046VER.CODCAL = R044CAL.CODCAL
+WHERE
+    '{periodo}' BETWEEN R044CAL.INICMP AND R044CAL.FIMCMP
+    AND R034FUN.NUMEMP = {numemp}
+    -- filtros opcionais de CODCCU, CODCAL, SITAFA
+ORDER BY
+    R034FUN.NOMFUN,
+    R046VER.REFEVE;
+
+
+Considere que a parte de integração com a Senior já está resolvida.
+Agora quero dar o próximo passo: transformar isso em um fluxo de faturamento utilizável pelo financeiro.
+
+O que eu preciso que você faça AGORA:
+1) Criar um router FastAPI para integração com a Senior
+
+Crie um arquivo, por exemplo: app/routers/senior_billing.py com um APIRouter que exponha os seguintes endpoints:
+
+GET /integrations/senior/status
+
+Usa get_connection_info() e test_connection()
+
+Retorna JSON com:
+
+api_domain
+
+api_key_configured
+
+database
+
+numemp_telos
+
+health (resultado de test_connection())
+
+GET /integrations/senior/cost-centers
+
+Usa fetch_cost_centers()
+
+Retorna lista de { codccu, nomccu }.
+
+GET /integrations/senior/employees
+
+Usa fetch_employees_telos()
+
+Retorna lista de funcionários TELOS.
+
+GET /integrations/senior/billing/summary
+
+Query params:
+
+periodo: str (YYYY-MM-DD)
+
+numemp: int (default = 6)
+
+codccu: str | None
+
+codcal: int | None
+
+sitafa: int | None
+
+Usa count_billing_data(...)
+
+Retorna JSON com:
+
+total_lancamentos
+
+total_funcionarios
+
+periodo
+
+numemp
+
+codccu (ou “Todos”)
+
+codcal
+
+sitafa
+
+GET /integrations/senior/billing
+
+Mesmos query params de /billing/summary
+
+Usa fetch_billing_data(...)
+
+Retorna lista de registros (cada item com os campos já montados no módulo: numcad, nomfun, datadm, codccu, datafa, valsal, sitafa, dessit, titred, perref, codcal, codeve, deseve, refeve, valeve).
+
+Inclua esse router no main.py (ou onde estiver a app FastAPI) com um prefixo adequado, por exemplo:
+
+from app.routers import senior_billing
+
+app.include_router(senior_billing.router)
+
+2) Criar um serviço de montagem de fatura (primeiro cliente genérico)
+
+Crie um módulo app/services/invoice_builder.py com uma função genérica:
+
+from typing import List, Dict, Any
+
+def build_generic_invoice(billing_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Recebe as linhas brutas de faturamento (fetch_billing_data)
+    e monta uma estrutura agregada por funcionário e centro de custo.
+
+    Por enquanto:
+      - agrupe por (NUMCAD, NOMFUN, CODCCU)
+      - some VALEVE (valor do evento) por funcionário
+      - mantenha PERREF, CODCAL, etc. se fizer sentido
+    Retorne uma lista de dicts, por exemplo:
+      {
+        "numcad": ...,
+        "nomfun": ...,
+        "codccu": ...,
+        "valor_total": ...,
+        "perref": ...,
+      }
+    """
+    ...
+
+
+Implementar de forma simples, mas limpa, usando defaultdict ou pandas para agrupar.
+
+Depois adapto essa função para cada cliente específico (FEMSA, Coca-Cola etc.), mas por enquanto quero uma fatura genérica que já some os valores por funcionário.
+
+3) Criar endpoint para exportar a fatura em Excel
+
+Crie um módulo app/services/excel_export.py com algo como:
+
+Função invoice_to_excel_bytes(invoice_rows: List[Dict[str, Any]], filename_hint: str) -> bytes
+
+Use pandas.DataFrame(invoice_rows)
+
+Use to_excel com BytesIO e engine="openpyxl"
+
+Retorne os bytes do arquivo.
+
+No app/routers/senior_billing.py, crie:
+
+GET /integrations/senior/billing/export
+
+Mesmos parâmetros de /billing:
+
+periodo
+
+numemp (default 6)
+
+codccu opcional
+
+codcal opcional
+
+sitafa opcional
+
+Passos:
+
+Chamar fetch_billing_data(...)
+
+Chamar build_generic_invoice(...)
+
+Chamar invoice_to_excel_bytes(...)
+
+Retornar um StreamingResponse com:
+
+media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+Content-Disposition com um nome de arquivo tipo:
+f"fatura_telos_{periodo}_{codccu or 'todos'}.xlsx"
+
+4) Criar uma telinha mínima (HTML simples) para o financeiro
+
+Crie:
+
+Um template HTML (por exemplo templates/billing_form.html) com:
+
+campo de data (periodo)
+
+select de codccu (preenchido via chamada AJAX a /integrations/senior/cost-centers)
+
+botão “Gerar Fatura”
+
+on submit, fazer um window.location para o endpoint /integrations/senior/billing/export?... para baixar o Excel.
+
+No FastAPI:
+
+Configurar Jinja2Templates (se ainda não estiver).
+
+Criar rota GET /billing/ui que renderiza esse template.
+
+Não precisa ser bonito, só funcional.
+
+Resumo do que você deve entregar
+
+Router senior_billing.py com os endpoints:
+
+/integrations/senior/status
+
+/integrations/senior/cost-centers
+
+/integrations/senior/employees
+
+/integrations/senior/billing/summary
+
+/integrations/senior/billing
+
+/integrations/senior/billing/export
+
+Serviço invoice_builder.py com build_generic_invoice(...).
+
+Serviço excel_export.py com função que converte a fatura em arquivo .xlsx (bytes) usando pandas/openpyxl.
+
+Uma página simples /billing/ui que permite ao usuário:
+
+escolher periodo
+
+escolher opcionalmente codccu
+
+clicar em “Gerar Fatura” e baixar o Excel.
+
+Usar sempre o módulo de integração com a Senior que já está pronto (não recriar a lógica de execute_query, fetch_billing_data, etc.).
